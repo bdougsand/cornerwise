@@ -10,9 +10,10 @@ from shared.mail import send as send_mail
 
 from cornerwise.adapt import adapt
 import site_config
+import utils
 
 from .models import Subscription
-from . import mail
+from . import changes, mail
 
 User = get_user_model()
 
@@ -30,15 +31,20 @@ def send_user_updates(self, sub: Subscription, updates):
               logger=get_logger(self))
 
 
-def send_subscription_updates(subscription, since):
+@shared_task(bind=True)
+def send_subscription_updates(self, subscriptions, since=None, user=None):
     """If there are any recent changes relevant to the given Subscription,
     create a task to send email to the subscription owner.
     """
-    if not since:
-        since = subscription.last_notified
-    updates = subscription.summarize_updates(since)
+    updates = changes.combine_change_updates([
+        sub.summarize_updates(since or sub.last_notified)
+        for sub in subscriptions])
+
+    if len(subscriptions) > 1:
+        updates["subscriptions"] = subscriptions
+
     if updates["total"]:
-        send_user_updates.delay(subscription.pk, updates)
+        mail.send_updates_email(subscriptions, since, updates)
         return True
 
 
@@ -103,10 +109,15 @@ def send_notifications(self, subscription_ids=None, since=None):
         subscriptions = Subscription.objects.active()\
                                             .filter(last_notified__lte=before)
 
+    groups = ("user", "site_name")
+    subscriptions = utils.group_by_ordered(subscriptions.order_by(*groups),
+                                           groups)
+
     sent = []
-    for subscription in subscriptions:
-        if send_subscription_updates(subscription, since):
-            sent.append(subscription.pk)
+    for ((user, site_name), subs) in subscriptions:
+        for subscription in subs:
+            if send_subscription_updates(subscription, since):
+                sent.append(subscription.pk)
 
     if sent:
         logger.info("Sent updates for %s subscription(s)", len(sent))

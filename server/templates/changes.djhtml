@@ -22,6 +22,15 @@
                             Added {{ proposal.updated|date:"l, F jS" }}
                         </span>
                     </div>
+                    {% if change.subscriptions %}
+                        <div class="affected-subscriptions">
+                            {% for sub in change.subscriptions %}
+                                <div class="subscription">
+                                    {{ sub.area_description }}
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% endif %}
                     <table>
                         <tbody>
                             {% for attribute in proposal.attributes %}

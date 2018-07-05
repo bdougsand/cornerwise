@@ -1,4 +1,29 @@
-<p>Here are the updates you requested:</p>
+{% if site_config %}
+    {% if site_config.updates_greeting %}
+        <p>
+            {{ site_config.updates_greeting|safe }}
+        </p>
+    {% else %}
+        <p>
+            Here are the projects in {{ site_config.region_name }} that were
+            added or changed since {{ summary.start|date }} and that you have
+            subscribed to receive updates about.
+        </p>
+    {% endif %}
+{% else %}
+    <p>
+        Here are the projects in your area that were added or changed since {{ start|date }}.
+    </p>
+{% endif %}
 
-<p>{{ update_summary }}</p>
+<p>
+    {% if total > 0 %}
+        {% if new %}{{ new }} new {% if updated %}and {% endif %}{% endif %}
+        {% if updated %}{{ updated }} updated{% endif %}
+        proposal{{ total|pluralize }}
+    {% else %}
+        No updates
+    {% endif %}
+</p>
+
 {{ updates }}

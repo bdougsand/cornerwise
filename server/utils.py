@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import itertools
 import json
 import os
 import re
@@ -33,10 +34,25 @@ def extension(path):
     return ext[1:] if ext else ""
 
 
+def make_pred(pred):
+    if callable(pred):
+        return pred
+    if isinstance(pred, str):
+        return lambda x: getattr(x, pred)
+    if isinstance(pred, (tuple, list)):
+        preds = [make_pred(p) for p in pred]
+        if isinstance(pred, list):
+            return lambda x: [p(x) for p in preds]
+        else:
+            return lambda x: tuple(p(x) for p in preds)
+    return lambda x: x
+
+
 def split_list(pred, items=None):
     if items is None:
         items = pred
-        pred = lambda item: bool(item)
+        pred = None
+    pred = make_pred(pred)
 
     yes = []
     no = []
@@ -46,6 +62,34 @@ def split_list(pred, items=None):
         else:
             no.append(item)
     return yes, no
+
+
+def changed(items):
+    yield True
+    for a, b in zip(items, itertools.islice(items, 1, None)):
+        yield a != b
+
+
+def group_by_ordered(pred, items):
+    """Generates tuples of (value, matches), where `value` is the result of calling
+    pred() on an item, and `matches` is a list of the consecutive items that
+    return that value when called with `pred`.
+
+    """
+    pred = make_pred(pred)
+    group_val = None
+    group_members = []
+    for item in items:
+        val = pred(item)
+        if val == group_val:
+            group_members.append(item)
+        else:
+            if group_members:
+                yield (group_val, group_members)
+            group_members = [item]
+            group_val = val
+
+    yield (group_val, group_members)
 
 
 class pushback_iter(object):

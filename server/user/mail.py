@@ -4,6 +4,7 @@ from django.template.loader import render_to_string
 
 from django.contrib.auth import get_user_model
 
+import site_config
 from utils import make_absolute_url
 
 from shared.mail import send as send_mail
@@ -27,23 +28,28 @@ def deactivate_context(user):
             "subscriptions": user.subscriptions.filter(active=True)}
 
 
-def updates_context(sub, updates):
+def updates_context(subs, summary):
     """Constructs the context for the subscription updates email.
     """
+    if isinstance(subs, models.Subscription):
+        subs = [subs]
+
+    site_name = subs[0].site_name
+    if all(site_name == sub.site_name for sub in subs):
+        config = site_config.by_hostname(site_name)
+    else:
+        site_name = None
     updates_html = render_to_string("changes.djhtml",
-                                    {"changes": updates["changes"],
-                                     "hostname": sub.site_name})
+                                    {"changes": summary["changes"],
+                                     "site_config": config,
+                                     "hostname": site_name})
 
-    datefmt = lambda dt: datetime.fromtimestamp(dt).strftime("%A, %B %-d") if dt else ""
-    fmt = "from {start} to {end}" if updates["end"] else "since {start}"
-    date_range = fmt.format(
-        start=datefmt(updates["start"]), end=datefmt(updates["end"]))
-
-    return _make_user_context(sub, {
+    context = _make_user_context(subs[0], {
         "updates": updates_html,
-        "update_summary": changes.summary_line(updates),
-        "date_range": date_range
+        "subscriptions": subs
     })
+    context.update(summary)
+    return context
 
 
 def welcome_context(subscription):
@@ -94,15 +100,22 @@ def send_confirm_subscription_email(subscription, logger=None):
               "welcome", confirm_context(subscription), logger=logger)
 
 
+def send_deactivation_email(user: User):
+    """Sends the email when a user is unsubscribed.
+    """
+    send_mail(user.email, "Cornerwise: Unsubscribed", "account_deactivated",
+              deactivate_context(user))
+
+
 def send_staff_notification_email(subscription, title, message, logger=None):
     send_mail(subscription.user.email, f"Cornerwise: {title}", "staff_notification",
               staff_notification_context(subscription, title, message),
               logger=logger)
 
 
-def send_updates_email(subscription, since, updates, logger=None):
-    send_mail(subscription.user.email, "Cornerwise: New Updates", "updates",
-              updates_context(subscription, updates),
+def send_updates_email(subscriptions, since, updates, logger=None):
+    send_mail(subscriptions[0].user.email, "Cornerwise: New Updates",
+              "updates", updates_context(subscriptions, updates),
               logger=logger)
 
 

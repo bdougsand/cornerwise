@@ -1,6 +1,7 @@
 from collections import defaultdict, OrderedDict
 
 from django.forms.models import model_to_dict
+from django.utils import timezone
 
 from proposal.models import Changeset, Document, Image, Proposal, Event
 from proposal.views import proposal_json
@@ -97,7 +98,7 @@ def summarize_query_updates(query_dict, since=None, until=None):
             "updated": len(proposals_changed),
             "total": len(new_ids) + len(proposals_changed),
             "start": since.timestamp(),
-            "end": until.timestamp if until else None}
+            "end": until.timestamp() if until else None}
 
 
 def summarize_subscription_updates(subscription, since, until=None):
@@ -105,7 +106,7 @@ def summarize_subscription_updates(subscription, since, until=None):
     Subscription that occurred after `since` through `until` (if given).
 
     :subscription: a subscription with a `query_dict` property containing a
-    dictionary suitabe for building a proposal query.
+    dictionary suitable for building a proposal query.
     :since: a datetime
     :until: datetime
 
@@ -122,6 +123,65 @@ def summarize_subscription_updates(subscription, since, until=None):
     # Don't include changes that predate the Subscription:
     since = max(subscription.created, since)
     return summarize_query_updates(query, since, until)
+
+
+def combine_change_updates(summaries):
+    """If a user has multiple subscriptions, combine them into a single update
+    summary dict. If a proposal is new for one Subscription but updated for
+    another, just show the updated fields.
+
+    """
+    if len(summaries) == 1:
+        return summaries[0]
+
+    combined_changed = OrderedDict()
+    combined_new = OrderedDict()
+    new_count = 0
+    changed_count = 0
+    end = start = timezone.now()
+
+    for summary in summaries:
+        sub = None
+        if isinstance(summary, tuple):
+            sub, summary = summary
+
+        start = min(start, summary["start"])
+        end = min(end, summary["end"])
+
+        for pk, proposal in summary["changes"].items():
+            if pk in combined_new:
+                if proposal["new"]:
+                    if sub:
+                        combined_new[pk]["subscriptions"].append(sub)
+                else:
+                    other_subs = combined_new[pk]["subscriptions"]
+                    if sub:
+                        other_subs.append(sub)
+                    proposal["subscriptions"] = other_subs
+                    combined_changed[pk] = proposal
+                    del combined_new[pk]
+            elif pk in combined_changed:
+                if sub:
+                    combined_changed[pk]["subscriptions"].append(sub)
+            else:
+                proposal["subscriptions"] = [sub] if sub else []
+                if proposal["new"]:
+                    combined_new[pk] = proposal
+                else:
+                    combined_changed[pk] = proposal
+
+        new_count = len(combined_new)
+        changed_count = len(combined_changed)
+        combined_new.update(combined_changed)
+
+        return {
+            "changes": combined_new,
+            "new": new_count,
+            "updated": new_count + changed_count,
+            "total": new_count + changed_count,
+            "start": start,
+            "end": end,
+        }
 
 
 def summarize_event(event):
@@ -162,16 +222,3 @@ def find_updates(subscriptions, since, until=None):
 
     return summary
 
-
-def summary_line(updates):
-    total_count = updates["total"]
-    if not total_count:
-        return "No updates"
-
-    new_count = updates["new"]
-    updated_count = updates["updated"]
-    return "".join([
-        f"{new_count} new " if new_count else "",
-        "and " if updated_count and new_count else "",
-        f"{updated_count} updated " if updated_count else "",
-        "proposal{}".format("s" if total_count > 1 else "")])
